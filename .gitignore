@@ -427,3 +427,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# QuickPOTA generated ADIF logs (user output; not source)
+*.adi
+*.adif
