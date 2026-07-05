@@ -51,7 +51,9 @@ internal static class Program
         Console.WriteLine("  quickpota <file.adi>      Append new QSOs to the given ADIF file.");
         Console.WriteLine();
         Console.WriteLine("In the QSO prompt:");
-        Console.WriteLine("  <call> <rst> <qth> <notes>   Log a contact, e.g. 'NF7N 55N WA nice sig'");
+        Console.WriteLine("  <call> [sent/rcvd | rcvd] [qth] [notes]   Log a contact.");
+        Console.WriteLine("     e.g. 'NF7N 55N WA'          -> RST_SENT=599 RST_RCVD=559 STATE=WA");
+        Console.WriteLine("     e.g. 'WM2V 55N/44N AZ'      -> RST_SENT=559 RST_RCVD=449 STATE=AZ");
         Console.WriteLine("  <freq> [mode]                Change frequency (KHz or MHz), optional mode");
         Console.WriteLine("  <mode>                       Change mode (CW SSB FT8 FM ...)");
         Console.WriteLine("  Q                            Quit and write the ADIF");
@@ -194,7 +196,7 @@ internal static class Program
             if (input.Equals("?", StringComparison.Ordinal) || input.Equals("HELP", StringComparison.OrdinalIgnoreCase))
             {
                 PrintStatus(session);
-                Console.WriteLine("  Enter '<call> <rst> <qth> <notes>' to log a QSO.");
+                Console.WriteLine("  Enter '<call> [sent/rcvd | rcvd] [qth] [notes]' to log a QSO.");
                 Console.WriteLine("  Enter a frequency (KHz or MHz) optionally followed by a mode.");
                 Console.WriteLine("  Enter a mode name (CW SSB FT8 FM ...) to switch modes.");
                 Console.WriteLine("  Enter 'Q' to quit.");
@@ -237,13 +239,24 @@ internal static class Program
         var call = tokens[0].ToUpperInvariant();
         if (!IsValidCall(call)) return null;
 
-        string rstRcvd = "599";
+        string rstSent = DefaultRstFor(session.CurrentMode);
+        string rstRcvd = rstSent;
         string? qth = null;
         string? notes = null;
 
         if (tokens.Length >= 2)
         {
-            rstRcvd = NormalizeRst(tokens[1], session.CurrentMode);
+            var rstToken = tokens[1];
+            var slash = rstToken.IndexOf('/');
+            if (slash > 0 && slash < rstToken.Length - 1)
+            {
+                rstSent = NormalizeRst(rstToken[..slash], session.CurrentMode);
+                rstRcvd = NormalizeRst(rstToken[(slash + 1)..], session.CurrentMode);
+            }
+            else
+            {
+                rstRcvd = NormalizeRst(rstToken, session.CurrentMode);
+            }
         }
         if (tokens.Length >= 3)
         {
@@ -259,7 +272,7 @@ internal static class Program
         return new Qso
         {
             Call = call,
-            RstSent = DefaultRstFor(session.CurrentMode),
+            RstSent = rstSent,
             RstRcvd = rstRcvd,
             Qth = qth,
             Notes = notes,

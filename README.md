@@ -58,13 +58,15 @@ quickpota --help
 
 Once the wizard finishes, each line at the `[n] >` prompt is one of:
 
-    <call> <rst> <qth> <notes>    Log a contact. Example: NF7N 55N WA nice sig
-    <freq> [mode]                 Change frequency (KHz or MHz), optional mode
-    <mode>                        Switch mode (CW SSB FT8 FM ...)
-    Q                             Quit and write the ADIF
-    ?                             Show status and help
+    <call> [sent/rcvd | rcvd] [qth] [notes]    Log a contact.
+                                                Example: NF7N 55N WA nice sig
+                                                Example: WM2V 55N/44N AZ
+    <freq> [mode]                              Change frequency (KHz or MHz), optional mode
+    <mode>                                     Switch mode (CW SSB FT8 FM ...)
+    Q                                          Quit and write the ADIF
+    ?                                          Show status and help
 
-Only the callsign is required on a QSO line. Missing fields fill in from mode-appropriate defaults (`599` for CW/RTTY, `59` for phone).
+Only the callsign is required on a QSO line. The RST field can be a single value (received; sent stays at the mode default) or a `sent/rcvd` pair separated by a slash. Missing fields fill in from mode-appropriate defaults (`599` for CW/RTTY, `59` for phone).
 
 RST cut numbers are translated for CW-like modes: `T=0 O=0 A=1 U=2 V=3 E=5 B=7 D=8 N=9`.
 
