@@ -11,25 +11,15 @@ internal static class Modes
         "ATV", "FAX", "ROS", "THROB",
     };
 
-    public static string Normalize(string mode)
+    public static (string Mode, string? Submode) Normalize(string input)
     {
-        var up = mode.ToUpperInvariant();
+        var up = input.ToUpperInvariant();
         return up switch
         {
-            "USB" or "LSB" => "SSB",
-            "FUSION" => "C4FM",
-            _ => up,
-        };
-    }
-
-    public static string? SubmodeFor(string modeInput)
-    {
-        var up = modeInput.ToUpperInvariant();
-        return up switch
-        {
-            "USB" => "USB",
-            "LSB" => "LSB",
-            _ => null,
+            "USB" => ("SSB", "USB"),
+            "LSB" => ("SSB", "LSB"),
+            "FUSION" => ("C4FM", null),
+            _ => (up, null),
         };
     }
 }

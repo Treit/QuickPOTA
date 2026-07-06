@@ -1,17 +1,17 @@
 using System.Net.Http;
-using System.Reflection;
+using System.Text;
 
 namespace QuickPOTA;
 
 internal sealed class Parks
 {
-    private const string SourceUrl = "https://pota.app/all_parks_ext.csv";
+    private static readonly Uri SourceUrl = new("https://pota.app/all_parks_ext.csv");
     private const string EmbeddedName = "QuickPOTA.all_parks_ext.csv";
     private static readonly TimeSpan MaxAge = TimeSpan.FromDays(30);
 
     private static readonly HttpClient Http = CreateHttpClient();
 
-    private readonly Dictionary<string, string> _byRef = new(StringComparer.OrdinalIgnoreCase);
+    private volatile Dictionary<string, string> _byRef = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsLoaded => _byRef.Count > 0;
     public int Count => _byRef.Count;
@@ -57,14 +57,20 @@ internal sealed class Parks
                 var bytes = await Http.GetByteArrayAsync(SourceUrl);
                 await File.WriteAllBytesAsync(path, bytes);
             }
-            catch
+            catch (HttpRequestException)
+            {
+            }
+            catch (TaskCanceledException)
+            {
+            }
+            catch (IOException)
             {
             }
         }
 
         if (File.Exists(path))
         {
-            using var fs = File.OpenRead(path);
+            await using var fs = File.OpenRead(path);
             if (await LoadFromStreamAsync(fs))
             {
                 Source = "cache";
@@ -72,7 +78,7 @@ internal sealed class Parks
             }
         }
 
-        using var embedded = typeof(Parks).Assembly.GetManifestResourceStream(EmbeddedName);
+        await using var embedded = typeof(Parks).Assembly.GetManifestResourceStream(EmbeddedName);
         if (embedded is not null && await LoadFromStreamAsync(embedded))
         {
             Source = "embedded";
@@ -83,27 +89,46 @@ internal sealed class Parks
     {
         using var reader = new StreamReader(stream);
         var header = await reader.ReadLineAsync();
-        if (header is null) return false;
+        if (header is null)
+        {
+            return false;
+        }
 
         var cols = ParseCsvLine(header);
         var refIdx = FindIndex(cols, "reference");
         var nameIdx = FindIndex(cols, "name");
-        if (refIdx < 0 || nameIdx < 0) return false;
+        if (refIdx < 0 || nameIdx < 0)
+        {
+            return false;
+        }
 
-        _byRef.Clear();
+        var next = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         while (await reader.ReadLineAsync() is { } line)
         {
-            if (line.Length == 0) continue;
+            if (line.Length == 0)
+            {
+                continue;
+            }
             var fields = ParseCsvLine(line);
-            if (fields.Count <= Math.Max(refIdx, nameIdx)) continue;
+            if (fields.Count <= Math.Max(refIdx, nameIdx))
+            {
+                continue;
+            }
             var r = fields[refIdx].Trim();
             var n = fields[nameIdx].Trim();
-            if (r.Length > 0 && !_byRef.ContainsKey(r))
+            if (r.Length > 0 && !next.ContainsKey(r))
             {
-                _byRef[r] = n;
+                next[r] = n;
             }
         }
-        return _byRef.Count > 0;
+
+        if (next.Count == 0)
+        {
+            return false;
+        }
+
+        _byRef = next;
+        return true;
     }
 
     private static int FindIndex(List<string> cols, string target)
@@ -121,7 +146,7 @@ internal sealed class Parks
     private static List<string> ParseCsvLine(string line)
     {
         var result = new List<string>();
-        var sb = new System.Text.StringBuilder();
+        var sb = new StringBuilder();
         var inQuotes = false;
         for (var i = 0; i < line.Length; i++)
         {

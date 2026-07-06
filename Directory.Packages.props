@@ -1,0 +1,9 @@
+<Project>
+
+  <ItemGroup>
+    <PackageVersion Include="Roslynator.Analyzers" Version="4.15.0" />
+    <PackageVersion Include="Roslynator.Formatting.Analyzers" Version="4.15.0" />
+    <PackageVersion Include="ToListinator" Version="0.0.10" />
+  </ItemGroup>
+
+</Project>
