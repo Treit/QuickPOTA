@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace QuickPOTA;
@@ -10,8 +11,9 @@ internal static class Adif
     public static void Write(string path, string myCall, string parkRef, string? parkName, IEnumerable<Qso> qsos, bool append)
     {
         var sb = new StringBuilder();
+        var writeHeader = !append || !File.Exists(path);
 
-        if (!append || !File.Exists(path))
+        if (writeHeader)
         {
             sb.Append(Header());
         }
@@ -23,11 +25,11 @@ internal static class Adif
 
         if (append && File.Exists(path))
         {
-            File.AppendAllText(path, sb.ToString(), Encoding.ASCII);
+            File.AppendAllText(path, sb.ToString(), Encoding.UTF8);
         }
         else
         {
-            File.WriteAllText(path, sb.ToString(), Encoding.ASCII);
+            File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
         }
     }
 
@@ -35,10 +37,10 @@ internal static class Adif
     {
         var now = DateTime.UtcNow;
         var sb = new StringBuilder();
-        sb.AppendLine($"QuickPOTA ADIF export");
+        sb.AppendLine("QuickPOTA ADIF export");
         sb.Append(Field("ADIF_VER", AdifVer));
         sb.Append(Field("PROGRAMID", ProgramId));
-        sb.Append(Field("CREATED_TIMESTAMP", now.ToString("yyyyMMdd HHmmss")));
+        sb.Append(Field("CREATED_TIMESTAMP", now.ToString("yyyyMMdd HHmmss", CultureInfo.InvariantCulture)));
         sb.AppendLine("<EOH>");
         return sb.ToString();
     }
@@ -47,15 +49,14 @@ internal static class Adif
     {
         var sb = new StringBuilder();
         sb.Append(Field("CALL", q.Call));
-        sb.Append(Field("QSO_DATE", q.TimeUtc.ToString("yyyyMMdd")));
-        sb.Append(Field("TIME_ON", q.TimeUtc.ToString("HHmmss")));
+        sb.Append(Field("QSO_DATE", q.TimeUtc.ToString("yyyyMMdd", CultureInfo.InvariantCulture)));
+        sb.Append(Field("TIME_ON", q.TimeUtc.ToString("HHmmss", CultureInfo.InvariantCulture)));
         sb.Append(Field("BAND", q.Band));
-        sb.Append(Field("FREQ", q.FreqMhz.ToString("0.000000")));
+        sb.Append(Field("FREQ", q.FreqMhz.ToString("0.000000", CultureInfo.InvariantCulture)));
         sb.Append(Field("MODE", q.Mode));
-        var sub = Modes.SubmodeFor(q.Mode);
-        if (sub is not null)
+        if (!string.IsNullOrEmpty(q.Submode))
         {
-            sb.Append(Field("SUBMODE", sub));
+            sb.Append(Field("SUBMODE", q.Submode));
         }
         sb.Append(Field("RST_SENT", q.RstSent));
         sb.Append(Field("RST_RCVD", q.RstRcvd));
@@ -84,74 +85,170 @@ internal static class Adif
     private static string Field(string name, string value)
     {
         var bytes = Encoding.UTF8.GetByteCount(value);
-        return $"<{name}:{bytes}>{value} ";
+        return string.Create(CultureInfo.InvariantCulture, $"<{name}:{bytes}>{value} ");
     }
 
-    public static (string? LastCall, double? FreqMhz, string? Mode, string? ParkRef, string? MyCall, DateTime? LastTime) PeekLast(string path)
+    public static (string? LastCall, double? FreqMhz, string? Mode, string? Submode, string? ParkRef, string? MyCall, DateTime? LastTime) PeekLast(string path)
     {
-        var text = File.ReadAllText(path);
-        var idx = text.LastIndexOf("<EOH>", StringComparison.OrdinalIgnoreCase);
-        var body = idx >= 0 ? text[(idx + 5)..] : text;
-        var records = body.Split(new[] { "<EOR>", "<eor>", "<Eor>" }, StringSplitOptions.RemoveEmptyEntries);
-        for (var i = records.Length - 1; i >= 0; i--)
+        var bytes = File.ReadAllBytes(path);
+        var eohEnd = FindEohEnd(bytes);
+        var bodyStart = eohEnd >= 0 ? eohEnd : 0;
+
+        var recordRanges = SplitByEor(bytes, bodyStart);
+        for (var i = recordRanges.Count - 1; i >= 0; i--)
         {
-            var rec = records[i];
-            if (string.IsNullOrWhiteSpace(rec)) continue;
-            var fields = ParseFields(rec);
+            var (offset, length) = recordRanges[i];
+            if (length == 0)
+            {
+                continue;
+            }
+            var fields = ParseFields(bytes, offset, length);
+            if (fields.Count == 0)
+            {
+                continue;
+            }
+
             fields.TryGetValue("CALL", out var call);
             fields.TryGetValue("FREQ", out var freq);
             fields.TryGetValue("MODE", out var mode);
+            fields.TryGetValue("SUBMODE", out var submode);
             fields.TryGetValue("MY_SIG_INFO", out var park);
             fields.TryGetValue("STATION_CALLSIGN", out var mycall);
             fields.TryGetValue("QSO_DATE", out var date);
             fields.TryGetValue("TIME_ON", out var time);
+
             DateTime? dt = null;
             if (date is not null && time is not null &&
                 DateTime.TryParseExact(date + time.PadRight(6, '0')[..6], "yyyyMMddHHmmss",
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
                     out var parsed))
             {
                 dt = parsed;
             }
             double? f = null;
-            if (freq is not null && double.TryParse(freq, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var fv))
+            if (freq is not null && double.TryParse(freq, NumberStyles.Float, CultureInfo.InvariantCulture, out var fv))
             {
                 f = fv;
             }
-            return (call, f, mode, park, mycall, dt);
+            return (call, f, mode, submode, park, mycall, dt);
         }
-        return (null, null, null, null, null, null);
+        return (null, null, null, null, null, null, null);
     }
 
-    private static Dictionary<string, string> ParseFields(string rec)
+    private static int FindEohEnd(byte[] bytes)
+    {
+        ReadOnlySpan<byte> marker = "<EOH>"u8;
+        for (var i = bytes.Length - marker.Length; i >= 0; i--)
+        {
+            var slice = bytes.AsSpan(i, marker.Length);
+            if (EqualsIgnoreCaseAscii(slice, marker))
+            {
+                return i + marker.Length;
+            }
+        }
+        return -1;
+    }
+
+    private static List<(int Offset, int Length)> SplitByEor(byte[] bytes, int start)
+    {
+        var ranges = new List<(int, int)>();
+        ReadOnlySpan<byte> marker = "<EOR>"u8;
+        var cursor = start;
+        var i = start;
+        while (i <= bytes.Length - marker.Length)
+        {
+            if (bytes[i] == (byte)'<' && EqualsIgnoreCaseAscii(bytes.AsSpan(i, marker.Length), marker))
+            {
+                ranges.Add((cursor, i - cursor));
+                i += marker.Length;
+                cursor = i;
+            }
+            else
+            {
+                i++;
+            }
+        }
+        if (cursor < bytes.Length)
+        {
+            ranges.Add((cursor, bytes.Length - cursor));
+        }
+        return ranges;
+    }
+
+    private static bool EqualsIgnoreCaseAscii(ReadOnlySpan<byte> a, ReadOnlySpan<byte> b)
+    {
+        if (a.Length != b.Length)
+        {
+            return false;
+        }
+        for (var i = 0; i < a.Length; i++)
+        {
+            var ca = a[i];
+            var cb = b[i];
+            if (ca >= (byte)'A' && ca <= (byte)'Z')
+            {
+                ca = (byte)(ca + 32);
+            }
+            if (cb >= (byte)'A' && cb <= (byte)'Z')
+            {
+                cb = (byte)(cb + 32);
+            }
+            if (ca != cb)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static Dictionary<string, string> ParseFields(byte[] bytes, int offset, int length)
     {
         var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var i = 0;
-        while (i < rec.Length)
+        var end = offset + length;
+        var i = offset;
+        while (i < end)
         {
-            var lt = rec.IndexOf('<', i);
-            if (lt < 0) break;
-            var gt = rec.IndexOf('>', lt);
-            if (gt < 0) break;
-            var tag = rec[(lt + 1)..gt];
-            var parts = tag.Split(':');
-            if (parts.Length < 2)
+            if (bytes[i] != (byte)'<')
+            {
+                i++;
+                continue;
+            }
+            var gt = IndexOf(bytes, (byte)'>', i + 1, end);
+            if (gt < 0)
+            {
+                break;
+            }
+            var tagLen = gt - (i + 1);
+            var tagText = Encoding.ASCII.GetString(bytes, i + 1, tagLen);
+            var parts = tagText.Split(':');
+            if (parts.Length < 2 ||
+                !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var valLen))
             {
                 i = gt + 1;
                 continue;
             }
-            if (!int.TryParse(parts[1], out var len))
+            var valStart = gt + 1;
+            if (valStart + valLen > end)
             {
-                i = gt + 1;
-                continue;
+                break;
             }
-            var start = gt + 1;
-            if (start + len > rec.Length) break;
-            var val = rec.Substring(start, len);
-            dict[parts[0].ToUpperInvariant()] = val;
-            i = start + len;
+            var value = Encoding.UTF8.GetString(bytes, valStart, valLen);
+            dict[parts[0].ToUpperInvariant()] = value;
+            i = valStart + valLen;
         }
         return dict;
+    }
+
+    private static int IndexOf(byte[] bytes, byte target, int start, int end)
+    {
+        for (var i = start; i < end; i++)
+        {
+            if (bytes[i] == target)
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 }

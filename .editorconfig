@@ -1,0 +1,65 @@
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{csproj,props,targets,sln,slnx,xml}]
+indent_size = 2
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.ps1]
+end_of_line = crlf
+
+[*.cs]
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:suggestion
+
+csharp_using_directive_placement = outside_namespace:error
+csharp_prefer_braces = true:warning
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_prefer_not_pattern = true:suggestion
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_prefer_primary_constructors = true:suggestion
+
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:warning
+dotnet_style_prefer_collection_expression = true:suggestion
+
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_space_after_cast = false
+csharp_preserve_single_line_statements = false
+
+# CA1303: Do not pass literals as localized parameters (not localizing a CLI tool)
+dotnet_diagnostic.CA1303.severity = none
+
+# CA2007: ConfigureAwait (not relevant for application code, only libraries)
+dotnet_diagnostic.CA2007.severity = none
+
+# CA1849: Sync over async for Console.WriteLine (not applicable to CLI tools)
+dotnet_diagnostic.CA1849.severity = none
+
+# RCS0058: Normalize whitespace at end of file (enforce insert_final_newline at build time)
+roslynator_new_line_at_end_of_file = true
+dotnet_diagnostic.RCS0058.severity = warning

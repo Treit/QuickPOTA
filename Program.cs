@@ -1,12 +1,15 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Text;
 
 namespace QuickPOTA;
 
 internal static class Program
 {
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Top-level CLI handler prints message and exits.")]
     private static async Task<int> Main(string[] args)
     {
-        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Console.OutputEncoding = Encoding.UTF8;
         try
         {
             if (args.Length > 0 && (args[0] == "-h" || args[0] == "--help" || args[0] == "/?"))
@@ -15,7 +18,7 @@ internal static class Program
                 return 0;
             }
 
-            string? existingFile = args.Length > 0 ? args[0] : null;
+            var existingFile = args.Length > 0 ? args[0] : null;
             if (existingFile is not null && !File.Exists(existingFile))
             {
                 Console.Error.WriteLine($"File not found: {existingFile}");
@@ -63,45 +66,46 @@ internal static class Program
 
     private static Session StartAppend(string path, Parks parks, Task loadTask)
     {
-        var (_, freq, mode, parkRef, myCall, lastTime) = Adif.PeekLast(path);
-        if (parkRef is null || myCall is null || freq is null || mode is null)
+        var peek = Adif.PeekLast(path);
+        if (peek.ParkRef is null || peek.MyCall is null || peek.FreqMhz is null || peek.Mode is null)
         {
             throw new InvalidOperationException("Existing ADIF does not contain enough context (park, callsign, freq, mode) to append.");
         }
 
-        try { loadTask.Wait(TimeSpan.FromSeconds(5)); } catch { }
-        var parkName = parks.Lookup(parkRef);
+        WaitForLoad(loadTask);
+        var parkName = parks.Lookup(peek.ParkRef);
 
         Console.WriteLine($"Append mode: {path}");
-        Console.WriteLine($"  Operator: {myCall}");
-        Console.WriteLine($"  Park:     {parkRef}{(parkName is null ? "" : $" ({parkName})")}");
-        Console.WriteLine($"  Freq:     {freq:0.000} MHz");
-        Console.WriteLine($"  Mode:     {mode}");
+        Console.WriteLine($"  Operator: {peek.MyCall}");
+        Console.WriteLine($"  Park:     {peek.ParkRef}{(parkName is null ? "" : $" ({parkName})")}");
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  Freq:     {peek.FreqMhz:0.000} MHz"));
+        Console.WriteLine($"  Mode:     {peek.Mode}{(peek.Submode is null ? "" : $" ({peek.Submode})")}");
         Console.WriteLine();
 
         return new Session
         {
             OutputPath = path,
             Append = true,
-            MyCall = myCall,
-            ParkRef = parkRef,
+            MyCall = peek.MyCall,
+            ParkRef = peek.ParkRef,
             ParkName = parkName,
-            CurrentFreqMhz = freq.Value,
-            CurrentMode = mode,
+            CurrentFreqMhz = peek.FreqMhz.Value,
+            CurrentMode = peek.Mode,
+            CurrentSubmode = peek.Submode,
             AppendTimeMode = true,
-            StartUtc = lastTime ?? DateTime.UtcNow,
+            StartUtc = peek.LastTime ?? DateTime.UtcNow,
             EndUtc = DateTime.UtcNow,
         };
     }
 
-    private static async Task<Session> StartNewAsync(Parks parks, Task loadTask)
+    private static Task<Session> StartNewAsync(Parks parks, Task loadTask)
     {
         Console.WriteLine("QuickPOTA - new activation");
         Console.WriteLine();
 
-        var myCall = PromptRequired("Your callsign", s => IsValidCall(s) ? null : "Enter a valid callsign.").ToUpperInvariant();
+        var myCall = PromptRequired("Your callsign", static s => IsValidCall(s) ? null : "Enter a valid callsign.").ToUpperInvariant();
 
-        try { loadTask.Wait(TimeSpan.FromSeconds(5)); } catch { }
+        WaitForLoad(loadTask);
         if (parks.IsLoaded)
         {
             Console.WriteLine($"[Loaded {parks.Count} POTA park references from {parks.Source}]");
@@ -148,11 +152,9 @@ internal static class Program
         Console.WriteLine();
 
         var freq = PromptFrequency("Starting frequency (KHz or MHz)");
-        var mode = PromptMode("Starting mode");
+        var (mode, submode) = PromptMode("Starting mode");
 
-        await Task.CompletedTask;
-
-        return new Session
+        return Task.FromResult(new Session
         {
             OutputPath = DefaultOutputPath(parkRef, date),
             Append = false,
@@ -161,14 +163,27 @@ internal static class Program
             ParkName = parkName,
             CurrentFreqMhz = freq,
             CurrentMode = mode,
+            CurrentSubmode = submode,
             StartUtc = startUtc,
             EndUtc = endUtc,
-        };
+        });
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background download failure is expected offline; embedded fallback covers it.")]
+    private static void WaitForLoad(Task loadTask)
+    {
+        try
+        {
+            loadTask.Wait(TimeSpan.FromSeconds(5));
+        }
+        catch (AggregateException)
+        {
+        }
     }
 
     private static string DefaultOutputPath(string parkRef, DateTime date)
     {
-        var name = $"{parkRef}-{date:yyyyMMdd}.adi";
+        var name = string.Create(CultureInfo.InvariantCulture, $"{parkRef}-{date:yyyyMMdd}.adi");
         return Path.Combine(Environment.CurrentDirectory, name);
     }
 
@@ -182,9 +197,15 @@ internal static class Program
         {
             Console.Write($"[{session.Qsos.Count + 1}] > ");
             var line = Console.ReadLine();
-            if (line is null) break;
+            if (line is null)
+            {
+                break;
+            }
             var input = line.Trim();
-            if (input.Length == 0) continue;
+            if (input.Length == 0)
+            {
+                continue;
+            }
 
             if (input.Equals("Q", StringComparison.OrdinalIgnoreCase) ||
                 input.Equals("QUIT", StringComparison.OrdinalIgnoreCase) ||
@@ -210,16 +231,20 @@ internal static class Program
                 session.CurrentFreqMhz = newFreq;
                 if (tokens.Length > 1 && Modes.Known.Contains(tokens[1]))
                 {
-                    session.CurrentMode = Modes.Normalize(tokens[1]);
+                    var (m, sm) = Modes.Normalize(tokens[1]);
+                    session.CurrentMode = m;
+                    session.CurrentSubmode = sm;
                 }
-                Console.WriteLine($"  -> QSY {session.CurrentFreqMhz:0.000} MHz {session.CurrentMode} ({Bands.FromMhz(session.CurrentFreqMhz) ?? "?"})");
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  -> QSY {session.CurrentFreqMhz:0.000} MHz {session.CurrentMode} ({Bands.FromMhz(session.CurrentFreqMhz) ?? "?"})"));
                 continue;
             }
 
             if (tokens.Length == 1 && Modes.Known.Contains(tokens[0]))
             {
-                session.CurrentMode = Modes.Normalize(tokens[0]);
-                Console.WriteLine($"  -> Mode {session.CurrentMode}");
+                var (m, sm) = Modes.Normalize(tokens[0]);
+                session.CurrentMode = m;
+                session.CurrentSubmode = sm;
+                Console.WriteLine($"  -> Mode {session.CurrentMode}{(sm is null ? "" : $" ({sm})")}");
                 continue;
             }
 
@@ -237,10 +262,13 @@ internal static class Program
     private static Qso? BuildQso(string[] tokens, Session session)
     {
         var call = tokens[0].ToUpperInvariant();
-        if (!IsValidCall(call)) return null;
+        if (!IsValidCall(call))
+        {
+            return null;
+        }
 
-        string rstSent = DefaultRstFor(session.CurrentMode);
-        string rstRcvd = rstSent;
+        var rstSent = DefaultRstFor(session.CurrentMode);
+        var rstRcvd = rstSent;
         string? qth = null;
         string? notes = null;
 
@@ -279,6 +307,7 @@ internal static class Program
             TimeUtc = session.AppendTimeMode ? DateTime.UtcNow : session.StartUtc,
             FreqMhz = session.CurrentFreqMhz,
             Mode = session.CurrentMode,
+            Submode = session.CurrentSubmode,
             Band = band,
         };
     }
@@ -293,14 +322,17 @@ internal static class Program
     private static string NormalizeRst(string raw, string mode)
     {
         var trimmed = raw.Trim();
-        if (trimmed.Length == 0) return DefaultRstFor(mode);
+        if (trimmed.Length == 0)
+        {
+            return DefaultRstFor(mode);
+        }
 
         if (mode is "FT8" or "FT4" or "JT65" or "JT9" or "JS8" or "MFSK" or "Q65")
         {
             return trimmed;
         }
 
-        var sb = new System.Text.StringBuilder(trimmed.Length);
+        var sb = new StringBuilder(trimmed.Length);
         foreach (var c in trimmed)
         {
             sb.Append(c switch
@@ -318,7 +350,7 @@ internal static class Program
         }
         var result = sb.ToString();
 
-        if (mode == "CW" || mode == "RTTY" || mode.StartsWith("PSK", StringComparison.OrdinalIgnoreCase))
+        if (mode is "CW" or "RTTY" || mode.StartsWith("PSK", StringComparison.OrdinalIgnoreCase))
         {
             if (result.Length == 2 && result.All(char.IsDigit))
             {
@@ -338,25 +370,56 @@ internal static class Program
     private static bool TryParseFrequency(string token, out double mhz)
     {
         mhz = 0;
-        if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+        if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || v <= 0)
         {
             return false;
         }
-        if (v <= 0) return false;
-        mhz = v >= 1000 ? v / 1000.0 : v;
-        return Bands.FromMhz(mhz) is not null;
+
+        var asMhz = v;
+        var asKhz = v / 1000.0;
+        var directValid = Bands.FromMhz(asMhz) is not null;
+        var scaledValid = Bands.FromMhz(asKhz) is not null;
+
+        if (directValid && scaledValid)
+        {
+            mhz = v >= 1000 ? asKhz : asMhz;
+            return true;
+        }
+        if (directValid)
+        {
+            mhz = asMhz;
+            return true;
+        }
+        if (scaledValid)
+        {
+            mhz = asKhz;
+            return true;
+        }
+        return false;
     }
 
     private static bool IsValidCall(string s)
     {
-        if (s.Length < 3 || s.Length > 15) return false;
+        if (s.Length is < 3 or > 15)
+        {
+            return false;
+        }
         var hasDigit = false;
         var hasLetter = false;
         foreach (var c in s)
         {
-            if (char.IsDigit(c)) hasDigit = true;
-            else if (char.IsLetter(c)) hasLetter = true;
-            else if (c != '/') return false;
+            if (char.IsDigit(c))
+            {
+                hasDigit = true;
+            }
+            else if (char.IsLetter(c))
+            {
+                hasLetter = true;
+            }
+            else if (c != '/')
+            {
+                return false;
+            }
         }
         return hasDigit && hasLetter;
     }
@@ -367,7 +430,10 @@ internal static class Program
         {
             Console.Write($"{label}: ");
             var line = Console.ReadLine();
-            if (line is null) throw new IOException("Input stream closed.");
+            if (line is null)
+            {
+                throw new IOException("Input stream closed.");
+            }
             var t = line.Trim();
             if (t.Length == 0)
             {
@@ -389,6 +455,7 @@ internal static class Program
 
     private static DateTime PromptDate(string label)
     {
+        string[] formats = ["yyyy-MM-dd", "yyyyMMdd", "yyyy/MM/dd", "MM/dd/yyyy", "M/d/yyyy"];
         while (true)
         {
             Console.Write($"{label} [today]: ");
@@ -398,7 +465,6 @@ internal static class Program
                 var t = DateTime.UtcNow;
                 return new DateTime(t.Year, t.Month, t.Day, 0, 0, 0, DateTimeKind.Utc);
             }
-            string[] formats = ["yyyy-MM-dd", "yyyyMMdd", "yyyy/MM/dd", "MM/dd/yyyy", "M/d/yyyy"];
             if (DateTime.TryParseExact(line, formats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt))
             {
                 return DateTime.SpecifyKind(dt.Date, DateTimeKind.Utc);
@@ -418,12 +484,15 @@ internal static class Program
                 Console.WriteLine("  ! Required.");
                 continue;
             }
-            var s = line.Replace(":", "");
-            if (s.Length == 3) s = "0" + s;
+            var s = line.Replace(":", "", StringComparison.Ordinal);
+            if (s.Length == 3)
+            {
+                s = "0" + s;
+            }
             if (s.Length == 4 && s.All(char.IsDigit))
             {
-                var h = int.Parse(s[..2], CultureInfo.InvariantCulture);
-                var m = int.Parse(s[2..], CultureInfo.InvariantCulture);
+                var h = int.Parse(s.AsSpan(0, 2), NumberStyles.Integer, CultureInfo.InvariantCulture);
+                var m = int.Parse(s.AsSpan(2, 2), NumberStyles.Integer, CultureInfo.InvariantCulture);
                 if (h < 24 && m < 60)
                 {
                     return new DateTime(date.Year, date.Month, date.Day, h, m, 0, DateTimeKind.Utc);
@@ -431,9 +500,9 @@ internal static class Program
             }
             if (s.Length == 6 && s.All(char.IsDigit))
             {
-                var h = int.Parse(s[..2], CultureInfo.InvariantCulture);
-                var m = int.Parse(s.Substring(2, 2), CultureInfo.InvariantCulture);
-                var sec = int.Parse(s[4..], CultureInfo.InvariantCulture);
+                var h = int.Parse(s.AsSpan(0, 2), NumberStyles.Integer, CultureInfo.InvariantCulture);
+                var m = int.Parse(s.AsSpan(2, 2), NumberStyles.Integer, CultureInfo.InvariantCulture);
+                var sec = int.Parse(s.AsSpan(4, 2), NumberStyles.Integer, CultureInfo.InvariantCulture);
                 if (h < 24 && m < 60 && sec < 60)
                 {
                     return new DateTime(date.Year, date.Month, date.Day, h, m, sec, DateTimeKind.Utc);
@@ -456,20 +525,23 @@ internal static class Program
             }
             if (TryParseFrequency(line, out var mhz))
             {
-                Console.WriteLine($"  -> {mhz:0.000} MHz ({Bands.FromMhz(mhz)})");
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  -> {mhz:0.000} MHz ({Bands.FromMhz(mhz)})"));
                 return mhz;
             }
             Console.WriteLine("  ! Not a valid amateur frequency.");
         }
     }
 
-    private static string PromptMode(string label)
+    private static (string Mode, string? Submode) PromptMode(string label)
     {
         while (true)
         {
             Console.Write($"{label} [CW]: ");
             var line = Console.ReadLine()?.Trim();
-            if (string.IsNullOrEmpty(line)) return "CW";
+            if (string.IsNullOrEmpty(line))
+            {
+                return ("CW", null);
+            }
             if (Modes.Known.Contains(line))
             {
                 return Modes.Normalize(line);
@@ -480,7 +552,7 @@ internal static class Program
 
     private static void PrintStatus(Session s)
     {
-        Console.WriteLine($"--- {s.ParkRef}{(s.ParkName is null ? "" : $" ({s.ParkName})")} | Op {s.MyCall} | {s.CurrentFreqMhz:0.000} MHz {s.CurrentMode} ({Bands.FromMhz(s.CurrentFreqMhz) ?? "?"}) ---");
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"--- {s.ParkRef}{(s.ParkName is null ? "" : $" ({s.ParkName})")} | Op {s.MyCall} | {s.CurrentFreqMhz:0.000} MHz {s.CurrentMode}{(s.CurrentSubmode is null ? "" : $" ({s.CurrentSubmode})")} ({Bands.FromMhz(s.CurrentFreqMhz) ?? "?"}) ---"));
     }
 }
 
@@ -493,10 +565,11 @@ internal sealed class Session
     public string? ParkName { get; init; }
     public required double CurrentFreqMhz { get; set; }
     public required string CurrentMode { get; set; }
+    public string? CurrentSubmode { get; set; }
     public DateTime StartUtc { get; init; }
     public DateTime EndUtc { get; init; }
     public bool AppendTimeMode { get; init; }
-    public List<Qso> Qsos { get; } = new();
+    public List<Qso> Qsos { get; } = [];
 
     public void Save()
     {
@@ -509,7 +582,10 @@ internal sealed class Session
 
     private void DistributeTimes()
     {
-        if (Qsos.Count == 0) return;
+        if (Qsos.Count == 0)
+        {
+            return;
+        }
         if (Qsos.Count == 1)
         {
             Qsos[0].TimeUtc = StartUtc;
@@ -518,7 +594,10 @@ internal sealed class Session
         var span = (EndUtc - StartUtc).TotalSeconds;
         if (span <= 0)
         {
-            foreach (var q in Qsos) q.TimeUtc = StartUtc;
+            foreach (var q in Qsos)
+            {
+                q.TimeUtc = StartUtc;
+            }
             return;
         }
         var step = span / (Qsos.Count - 1);

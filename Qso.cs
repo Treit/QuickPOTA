@@ -10,5 +10,6 @@ internal sealed class Qso
     public required DateTime TimeUtc { get; set; }
     public required double FreqMhz { get; init; }
     public required string Mode { get; init; }
+    public string? Submode { get; init; }
     public required string Band { get; init; }
 }
