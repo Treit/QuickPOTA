@@ -262,6 +262,7 @@ internal static class Program
     private static Qso? BuildQso(string[] tokens, Session session)
     {
         var call = tokens[0].ToUpperInvariant();
+
         if (!IsValidCall(call))
         {
             return null;
@@ -273,10 +274,12 @@ internal static class Program
         string? notes = null;
 
         var i = 1;
+
         if (i < tokens.Length && LooksLikeRstToken(tokens[i], session.CurrentMode))
         {
             var rstToken = tokens[i];
             var slash = rstToken.IndexOf('/');
+
             if (slash > 0 && slash < rstToken.Length - 1)
             {
                 rstSent = NormalizeRst(rstToken[..slash], session.CurrentMode);
@@ -286,11 +289,14 @@ internal static class Program
             {
                 rstRcvd = NormalizeRst(rstToken, session.CurrentMode);
             }
+
             i++;
         }
+
         if (i < tokens.Length)
         {
             var qthToken = tokens[i];
+
             if (LooksLikeRstToken(qthToken, session.CurrentMode))
             {
                 Console.WriteLine($"  warning: '{qthToken}' looks like an RST report; not writing it as QTH. Use '<sent>/<rcvd>' if you meant two reports.");
@@ -299,8 +305,10 @@ internal static class Program
             {
                 qth = qthToken.ToUpperInvariant();
             }
+
             i++;
         }
+
         if (i < tokens.Length)
         {
             notes = string.Join(' ', tokens[i..]);
@@ -330,18 +338,23 @@ internal static class Program
         _ => "59",
     };
 
+    private const string CutNumbers = "TOAUVEBDN";
+
     private static bool LooksLikeRstToken(string token, string mode)
     {
         if (string.IsNullOrEmpty(token))
         {
             return false;
         }
+
         var slash = token.IndexOf('/');
+
         if (slash > 0 && slash < token.Length - 1)
         {
             return LooksLikeSingleRst(token[..slash], mode)
                 && LooksLikeSingleRst(token[(slash + 1)..], mode);
         }
+
         return LooksLikeSingleRst(token, mode);
     }
 
@@ -351,13 +364,16 @@ internal static class Program
         {
             return false;
         }
+
         if (mode is "FT8" or "FT4" or "JT65" or "JT9" or "JS8" or "MFSK" or "Q65")
         {
             var start = s[0] is '-' or '+' ? 1 : 0;
+
             if (start == s.Length)
             {
                 return false;
             }
+
             for (var k = start; k < s.Length; k++)
             {
                 if (!char.IsDigit(s[k]))
@@ -365,27 +381,33 @@ internal static class Program
                     return false;
                 }
             }
+
             return s.Length - start <= 3;
         }
 
         var cwLike = mode is "CW" or "RTTY" || mode.StartsWith("PSK", StringComparison.OrdinalIgnoreCase);
         var maxLen = cwLike ? 3 : 2;
+
         if (s.Length < 2 || s.Length > maxLen)
         {
             return false;
         }
+
         if (!char.IsDigit(s[0]))
         {
             return false;
         }
+
         for (var k = 1; k < s.Length; k++)
         {
             var c = char.ToUpperInvariant(s[k]);
-            if (!char.IsDigit(c) && "TOAUVEBDN".IndexOf(c, StringComparison.Ordinal) < 0)
+
+            if (!char.IsDigit(c) && CutNumbers.IndexOf(c, StringComparison.Ordinal) < 0)
             {
                 return false;
             }
         }
+
         return true;
     }
 
