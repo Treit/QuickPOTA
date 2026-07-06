@@ -15,18 +15,31 @@ CLI tool for quickly generating ADIF files to upload to https://pota.app. Turn a
 
 ## Install and build
 
+Quickest path (PowerShell 7+):
+
+```powershell
+.\build.ps1
+```
+
+This runs `dotnet build` and then `dotnet publish` in Release for the current OS, producing a single self-contained `quickpota` executable under `bin\Release\net10.0\<rid>\publish\`. Useful switches:
+
+```powershell
+.\build.ps1 -Clean                    # wipe bin/obj first
+.\build.ps1 -Configuration Debug      # debug build, still AOT-published
+.\build.ps1 -Runtime linux-x64        # cross-target another RID
+.\build.ps1 -NoPublish                # skip AOT publish (build only)
+.\build.ps1 -Run                      # launch the published exe when done
+```
+
+Or drive the .NET CLI directly:
+
 ```
 dotnet build -c Release
-```
-
-For a self-contained native executable:
-
-```
 dotnet publish -c Release -r win-x64
 dotnet publish -c Release -r linux-x64
 ```
 
-On Windows, AOT publish requires the Visual Studio C++ build tools. If the linker step fails with `vswhere.exe is not recognized`, add the Visual Studio Installer directory to `PATH` for the current shell:
+On Windows, AOT publish requires the Visual Studio C++ build tools. If the linker step fails with `vswhere.exe is not recognized`, add the Visual Studio Installer directory to `PATH` for the current shell (the `build.ps1` script does this automatically):
 
 ```powershell
 $env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"
