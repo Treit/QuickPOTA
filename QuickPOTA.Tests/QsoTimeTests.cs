@@ -24,6 +24,30 @@ public sealed class QsoTimeTests
     }
 
     [Fact]
+    public void BuildQsoSupportsPostRstTimeWithoutQth()
+    {
+        var session = CreateSession();
+
+        var qso = Program.BuildQso(Split("EA1DD 539 :50"), session);
+
+        Assert.NotNull(qso);
+        Assert.True(qso.HasExplicitTime);
+        Assert.Equal(new DateTime(2026, 7, 5, 13, 50, 0, DateTimeKind.Utc), qso.TimeUtc);
+        Assert.Equal("539", qso.RstRcvd);
+        Assert.Null(qso.Qth);
+    }
+
+    [Fact]
+    public void LoggedMessageShowsExplicitTime()
+    {
+        var session = CreateSession();
+        var qso = Program.BuildQso(Split("EA1DD 539 :50"), session);
+
+        Assert.NotNull(qso);
+        Assert.Equal("  logged EA1DD 13:50Z 599/539", Program.LoggedMessage(qso));
+    }
+
+    [Fact]
     public void BuildQsoPartialTimesUseLastExplicitHourAndRollOver()
     {
         var session = CreateSession();

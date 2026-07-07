@@ -71,11 +71,12 @@ quickpota --help
 
 Once the wizard finishes, each line at the `[n] >` prompt is one of:
 
-    [time] <call> [time] [sent/rcvd | rcvd] [qth] [notes]
+    [time] <call> [time] [sent/rcvd | rcvd] [time] [qth] [notes]
                                                 Log a contact.
                                                 Example: NF7N 55N WA nice sig
                                                 Example: :53 NF7N 55N WA
                                                 Example: NF7N 13:05 55N WA
+                                                Example: EA1DD 539 :50
                                                 Example: WM2V 55N/44N AZ
     <freq> [mode]                              Change frequency (KHz or MHz), optional mode
     <mode>                                     Switch mode (CW SSB FT8 FM ...)
@@ -84,7 +85,7 @@ Once the wizard finishes, each line at the `[n] >` prompt is one of:
 
 Only the callsign is required on a QSO line. The RST field can be a single value (received; sent stays at the mode default) or a `sent/rcvd` pair separated by a slash. Missing fields fill in from mode-appropriate defaults (`599` for CW/RTTY, `59` for phone).
 
-Times are optional and can appear either before or immediately after the callsign. Full times use `HH:MM` UTC, such as `13:05`. Short times use `:MM` and reuse the last explicit QSO hour, or the activation start hour for the first explicit time; if minutes go backward, the hour rolls forward, so `:53` followed by `:05` becomes `13:53` then `14:05`. When some QSOs have times and others do not, untimed QSOs are inferred between the explicit times and activation bounds when the log is written. If no QSO times are entered, the original evenly-spread timestamp behavior is used.
+Times are optional and can appear before the callsign, immediately after the callsign, or after the RST report. Full times use `HH:MM` UTC, such as `13:05`. Short times use `:MM` and reuse the last explicit QSO hour, or the activation start hour for the first explicit time; if minutes go backward, the hour rolls forward, so `:53` followed by `:05` becomes `13:53` then `14:05`. When some QSOs have times and others do not, untimed QSOs are inferred between the explicit times and activation bounds when the log is written. If no QSO times are entered, the original evenly-spread timestamp behavior is used.
 
 RST cut numbers are translated for CW-like modes: `T=0 O=0 A=1 U=2 V=3 E=5 B=7 D=8 N=9`.
 

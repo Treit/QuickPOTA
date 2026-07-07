@@ -54,7 +54,7 @@ internal static class Program
         Console.WriteLine("  quickpota <file.adi>      Append new QSOs to the given ADIF file.");
         Console.WriteLine();
         Console.WriteLine("In the QSO prompt:");
-        Console.WriteLine("  [time] <call> [time] [sent/rcvd | rcvd] [qth] [notes]   Log a contact.");
+        Console.WriteLine("  [time] <call> [time] [sent/rcvd | rcvd] [time] [qth] [notes]   Log a contact.");
         Console.WriteLine("     e.g. 'NF7N 55N WA'          -> RST_SENT=599 RST_RCVD=559 STATE=WA");
         Console.WriteLine("     e.g. ':53 NF7N 55N WA'      -> TIME_ON uses last QSO hour, rolling over when needed");
         Console.WriteLine("     e.g. 'WM2V 55N/44N AZ'      -> RST_SENT=559 RST_RCVD=449 STATE=AZ");
@@ -218,7 +218,7 @@ internal static class Program
             if (input.Equals("?", StringComparison.Ordinal) || input.Equals("HELP", StringComparison.OrdinalIgnoreCase))
             {
                 PrintStatus(session);
-                Console.WriteLine("  Enter '[time] <call> [time] [sent/rcvd | rcvd] [qth] [notes]' to log a QSO.");
+                Console.WriteLine("  Enter '[time] <call> [time] [sent/rcvd | rcvd] [time] [qth] [notes]' to log a QSO.");
                 Console.WriteLine("  Enter a frequency (KHz or MHz) optionally followed by a mode.");
                 Console.WriteLine("  Enter a mode name (CW SSB FT8 FM ...) to switch modes.");
                 Console.WriteLine("  Enter 'Q' to quit.");
@@ -252,13 +252,19 @@ internal static class Program
             var qso = BuildQso(tokens, session);
             if (qso is null)
             {
-                Console.WriteLine("  ! Could not parse. Expected: <call> [rst] [qth] [notes...]");
+                Console.WriteLine("  ! Could not parse. Expected: [time] <call> [rst] [time] [qth] [notes...]");
                 continue;
             }
             session.Qsos.Add(qso);
             session.NoteLoggedQso(qso);
-            Console.WriteLine($"  logged {qso.Call} {qso.RstSent}/{qso.RstRcvd}{(string.IsNullOrEmpty(qso.Qth) ? "" : " " + qso.Qth)}");
+            Console.WriteLine(LoggedMessage(qso));
         }
+    }
+
+    internal static string LoggedMessage(Qso qso)
+    {
+        var time = qso.HasExplicitTime ? qso.TimeUtc.ToString("HH:mm", CultureInfo.InvariantCulture) + "Z " : "";
+        return $"  logged {qso.Call} {time}{qso.RstSent}/{qso.RstRcvd}{(string.IsNullOrEmpty(qso.Qth) ? "" : " " + qso.Qth)}";
     }
 
     internal static Qso? BuildQso(string[] tokens, Session session)
@@ -312,6 +318,12 @@ internal static class Program
                 rstRcvd = NormalizeRst(rstToken, session.CurrentMode);
             }
 
+            i++;
+        }
+
+        if (i < tokens.Length && entryTime is null && TryParseQsoEntryTime(tokens[i], session, out parsedTime))
+        {
+            entryTime = parsedTime;
             i++;
         }
 
