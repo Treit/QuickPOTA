@@ -71,8 +71,11 @@ quickpota --help
 
 Once the wizard finishes, each line at the `[n] >` prompt is one of:
 
-    <call> [sent/rcvd | rcvd] [qth] [notes]    Log a contact.
+    [time] <call> [time] [sent/rcvd | rcvd] [qth] [notes]
+                                                Log a contact.
                                                 Example: NF7N 55N WA nice sig
+                                                Example: :53 NF7N 55N WA
+                                                Example: NF7N 13:05 55N WA
                                                 Example: WM2V 55N/44N AZ
     <freq> [mode]                              Change frequency (KHz or MHz), optional mode
     <mode>                                     Switch mode (CW SSB FT8 FM ...)
@@ -80,6 +83,8 @@ Once the wizard finishes, each line at the `[n] >` prompt is one of:
     ?                                          Show status and help
 
 Only the callsign is required on a QSO line. The RST field can be a single value (received; sent stays at the mode default) or a `sent/rcvd` pair separated by a slash. Missing fields fill in from mode-appropriate defaults (`599` for CW/RTTY, `59` for phone).
+
+Times are optional and can appear either before or immediately after the callsign. Full times use `HH:MM` UTC, such as `13:05`. Short times use `:MM` and reuse the last explicit QSO hour, or the activation start hour for the first explicit time; if minutes go backward, the hour rolls forward, so `:53` followed by `:05` becomes `13:53` then `14:05`. When some QSOs have times and others do not, untimed QSOs are inferred between the explicit times and activation bounds when the log is written. If no QSO times are entered, the original evenly-spread timestamp behavior is used.
 
 RST cut numbers are translated for CW-like modes: `T=0 O=0 A=1 U=2 V=3 E=5 B=7 D=8 N=9`.
 
@@ -108,7 +113,7 @@ Starting mode [CW]:
 Ready. Type 'Q' <enter> to quit and write the ADIF.
 
 --- US-3166 (Bridle Trails State Park) | Op K7ABC | 14.030 MHz CW (20m) ---
-[1] > NF7N 55N WA
+[1] > :53 NF7N 55N WA
   logged NF7N 599/559 WA
 [2] > K5XYZ 5NN TX great sig
   logged K5XYZ 599/599 TX
@@ -127,7 +132,7 @@ Ready. Type 'Q' <enter> to quit and write the ADIF.
 Wrote 4 QSO(s) to C:\path\to\US-3166-20260705.adi
 ```
 
-The four QSOs get timestamps spread evenly between `1600Z` and `1800Z`, and each carries `MY_SIG=POTA` with `MY_SIG_INFO=US-3166` ready for upload.
+The explicit `:53` timestamp pins the first QSO at `1653Z`; any untimed QSOs are inferred across the activation window before the log is written. Each QSO carries `MY_SIG=POTA` with `MY_SIG_INFO=US-3166` ready for upload.
 
 ## Walkthrough: appending to an existing log
 
@@ -151,7 +156,7 @@ Ready. Type 'Q' <enter> to quit and write the ADIF.
 Wrote 2 QSO(s) to US-3166-20260705.adi
 ```
 
-In append mode the tool reuses the park, operator, freq, and mode from the last record in the file, and stamps each new QSO with the current UTC time.
+In append mode the tool reuses the park, operator, freq, mode, and last logged time from the last record in the file. Explicit `HH:MM` or `:MM` QSO times work the same way as they do for a new activation; without explicit times, appended QSOs keep their entry-time timestamps.
 
 ## Cut-number examples
 

@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="QuickPOTA.Tests\**\*.cs" />
     <EmbeddedResource Include="data\all_parks_ext.csv" LogicalName="QuickPOTA.all_parks_ext.csv" />
   </ItemGroup>
 

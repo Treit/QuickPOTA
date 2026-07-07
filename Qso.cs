@@ -8,6 +8,7 @@ internal sealed class Qso
     public string? Qth { get; init; }
     public string? Notes { get; init; }
     public required DateTime TimeUtc { get; set; }
+    public bool HasExplicitTime { get; init; }
     public required double FreqMhz { get; init; }
     public required string Mode { get; init; }
     public string? Submode { get; init; }
