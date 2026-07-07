@@ -38,6 +38,34 @@ public sealed class QsoTimeTests
     }
 
     [Fact]
+    public void BuildQsoElidesTrailingTimeFromNotes()
+    {
+        var session = CreateSession();
+
+        var qso = Program.BuildQso(Split("EA1DD 539 DX :50"), session);
+
+        Assert.NotNull(qso);
+        Assert.True(qso.HasExplicitTime);
+        Assert.Equal(new DateTime(2026, 7, 5, 13, 50, 0, DateTimeKind.Utc), qso.TimeUtc);
+        Assert.Equal("DX", qso.Qth);
+        Assert.Null(qso.Notes);
+    }
+
+    [Fact]
+    public void BuildQsoElidesTimeFromNotesButKeepsOtherNotes()
+    {
+        var session = CreateSession();
+
+        var qso = Program.BuildQso(Split("EA1DD 539 DX :50 loud flutter"), session);
+
+        Assert.NotNull(qso);
+        Assert.True(qso.HasExplicitTime);
+        Assert.Equal(new DateTime(2026, 7, 5, 13, 50, 0, DateTimeKind.Utc), qso.TimeUtc);
+        Assert.Equal("DX", qso.Qth);
+        Assert.Equal("loud flutter", qso.Notes);
+    }
+
+    [Fact]
     public void LoggedMessageShowsExplicitTime()
     {
         var session = CreateSession();
