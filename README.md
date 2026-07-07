@@ -178,7 +178,9 @@ Given `SSB` mode (cut numbers are still translated where they appear, but the de
 
 New activations write `<PARK>-<YYYYMMDD>.adi` in the current directory (for example, `US-3166-20260705.adi`). Append mode writes back to the file you passed on the command line.
 
-Fields emitted per QSO include `CALL`, `QSO_DATE`, `TIME_ON`, `BAND`, `FREQ`, `MODE`, `RST_SENT`, `RST_RCVD`, `STATION_CALLSIGN`, `OPERATOR`, `MY_SIG=POTA`, `MY_SIG_INFO=<park>`, plus `STATE`, `QTH`, `COMMENT`, and `SIG_INFO=<park name>` when available.
+Fields emitted per QSO include `CALL`, `QSO_DATE`, `TIME_ON`, `BAND`, `FREQ`, `MODE`, `RST_SENT`, `RST_RCVD`, `STATION_CALLSIGN`, `OPERATOR`, `MY_SIG=POTA`, `MY_SIG_INFO=<park reference>`, plus `STATE`, `QTH`, `COMMENT`, and `SIG_INFO=<park name>` when available.
+
+`MY_SIG_INFO` is the important POTA reference field for a normal activation: it is the special-interest-group information for the logging station, so QuickPOTA writes your activated park reference there, such as `US-3166`. In ADIF, the non-`MY_` fields `SIG` and `SIG_INFO` describe the contacted station's special activity or interest group. QuickPOTA does not currently log the contacted station's POTA reference for park-to-park QSOs; the `SIG_INFO=<park name>` value is a human-readable park name convenience, not the POTA credit reference.
 
 ## Park database
 
