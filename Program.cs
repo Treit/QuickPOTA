@@ -54,8 +54,9 @@ internal static class Program
         Console.WriteLine("  quickpota <file.adi>      Append new QSOs to the given ADIF file.");
         Console.WriteLine();
         Console.WriteLine("In the QSO prompt:");
-        Console.WriteLine("  <call> [sent/rcvd | rcvd] [qth] [notes]   Log a contact.");
+        Console.WriteLine("  [time] <call> [time] [sent/rcvd | rcvd] [time] [qth] [notes]   Log a contact.");
         Console.WriteLine("     e.g. 'NF7N 55N WA'          -> RST_SENT=599 RST_RCVD=559 STATE=WA");
+        Console.WriteLine("     e.g. ':53 NF7N 55N WA'      -> TIME_ON uses last QSO hour, rolling over when needed");
         Console.WriteLine("     e.g. 'WM2V 55N/44N AZ'      -> RST_SENT=559 RST_RCVD=449 STATE=AZ");
         Console.WriteLine("  <freq> [mode]                Change frequency (KHz or MHz), optional mode");
         Console.WriteLine("  <mode>                       Change mode (CW SSB FT8 FM ...)");
@@ -217,7 +218,7 @@ internal static class Program
             if (input.Equals("?", StringComparison.Ordinal) || input.Equals("HELP", StringComparison.OrdinalIgnoreCase))
             {
                 PrintStatus(session);
-                Console.WriteLine("  Enter '<call> [sent/rcvd | rcvd] [qth] [notes]' to log a QSO.");
+                Console.WriteLine("  Enter '[time] <call> [time] [sent/rcvd | rcvd] [time] [qth] [notes]' to log a QSO.");
                 Console.WriteLine("  Enter a frequency (KHz or MHz) optionally followed by a mode.");
                 Console.WriteLine("  Enter a mode name (CW SSB FT8 FM ...) to switch modes.");
                 Console.WriteLine("  Enter 'Q' to quit.");
@@ -251,29 +252,56 @@ internal static class Program
             var qso = BuildQso(tokens, session);
             if (qso is null)
             {
-                Console.WriteLine("  ! Could not parse. Expected: <call> [rst] [qth] [notes...]");
+                Console.WriteLine("  ! Could not parse. Expected: [time] <call> [rst] [time] [qth] [notes...]");
                 continue;
             }
             session.Qsos.Add(qso);
-            Console.WriteLine($"  logged {qso.Call} {qso.RstSent}/{qso.RstRcvd}{(string.IsNullOrEmpty(qso.Qth) ? "" : " " + qso.Qth)}");
+            session.NoteLoggedQso(qso);
+            Console.WriteLine(LoggedMessage(qso));
         }
     }
 
-    private static Qso? BuildQso(string[] tokens, Session session)
+    internal static string LoggedMessage(Qso qso)
     {
-        var call = tokens[0].ToUpperInvariant();
+        var time = qso.HasExplicitTime ? qso.TimeUtc.ToString("HH:mm", CultureInfo.InvariantCulture) + "Z " : "";
+        return $"  logged {qso.Call} {time}{qso.RstSent}/{qso.RstRcvd}{(string.IsNullOrEmpty(qso.Qth) ? "" : " " + qso.Qth)}";
+    }
+
+    internal static Qso? BuildQso(string[] tokens, Session session)
+    {
+        var i = 0;
+        DateTime? entryTime = null;
+
+        if (TryParseQsoEntryTime(tokens[i], session, out var parsedTime))
+        {
+            entryTime = parsedTime;
+            i++;
+        }
+
+        if (i >= tokens.Length)
+        {
+            return null;
+        }
+
+        var call = tokens[i].ToUpperInvariant();
 
         if (!IsValidCall(call))
         {
             return null;
         }
 
+        i++;
+
+        if (i < tokens.Length && entryTime is null && TryParseQsoEntryTime(tokens[i], session, out parsedTime))
+        {
+            entryTime = parsedTime;
+            i++;
+        }
+
         var rstSent = DefaultRstFor(session.CurrentMode);
         var rstRcvd = rstSent;
         string? qth = null;
         string? notes = null;
-
-        var i = 1;
 
         if (i < tokens.Length && LooksLikeRstToken(tokens[i], session.CurrentMode))
         {
@@ -290,6 +318,12 @@ internal static class Program
                 rstRcvd = NormalizeRst(rstToken, session.CurrentMode);
             }
 
+            i++;
+        }
+
+        if (i < tokens.Length && entryTime is null && TryParseQsoEntryTime(tokens[i], session, out parsedTime))
+        {
+            entryTime = parsedTime;
             i++;
         }
 
@@ -323,12 +357,58 @@ internal static class Program
             RstRcvd = rstRcvd,
             Qth = qth,
             Notes = notes,
-            TimeUtc = session.AppendTimeMode ? DateTime.UtcNow : session.StartUtc,
+            TimeUtc = entryTime ?? session.DefaultQsoTimeUtc(),
+            HasExplicitTime = entryTime is not null,
             FreqMhz = session.CurrentFreqMhz,
             Mode = session.CurrentMode,
             Submode = session.CurrentSubmode,
             Band = band,
         };
+    }
+
+    private static bool TryParseQsoEntryTime(string token, Session session, out DateTime timeUtc)
+    {
+        timeUtc = default;
+
+        if (token.Length == 3 && token[0] == ':' && int.TryParse(token.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var minute))
+        {
+            if (minute is < 0 or >= 60)
+            {
+                return false;
+            }
+
+            var reference = session.LastExplicitQsoTimeUtc ?? session.StartUtc;
+            timeUtc = new DateTime(reference.Year, reference.Month, reference.Day, reference.Hour, minute, 0, DateTimeKind.Utc);
+            if (minute < reference.Minute)
+            {
+                timeUtc = timeUtc.AddHours(1);
+            }
+            return true;
+        }
+
+        var separator = token.IndexOf(':');
+        if (separator <= 0 || separator != token.LastIndexOf(':') || separator == token.Length - 1)
+        {
+            return false;
+        }
+
+        if (!int.TryParse(token.AsSpan(0, separator), NumberStyles.None, CultureInfo.InvariantCulture, out var hour) ||
+            !int.TryParse(token.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out minute) ||
+            hour < 0 ||
+            hour >= 24 ||
+            minute < 0 ||
+            minute >= 60)
+        {
+            return false;
+        }
+
+        var dateReference = session.LastExplicitQsoTimeUtc ?? session.StartUtc;
+        timeUtc = new DateTime(dateReference.Year, dateReference.Month, dateReference.Day, hour, minute, 0, DateTimeKind.Utc);
+        if (timeUtc < dateReference)
+        {
+            timeUtc = timeUtc.AddDays(1);
+        }
+        return true;
     }
 
     private static string DefaultRstFor(string mode) => mode switch
@@ -661,41 +741,163 @@ internal sealed class Session
     public DateTime StartUtc { get; init; }
     public DateTime EndUtc { get; init; }
     public bool AppendTimeMode { get; init; }
+    public DateTime? LastExplicitQsoTimeUtc { get; set; }
     public List<Qso> Qsos { get; } = [];
 
     public void Save()
     {
-        if (!AppendTimeMode)
-        {
-            DistributeTimes();
-        }
+        ResolveTimes();
         Adif.Write(OutputPath, MyCall, ParkRef, ParkName, Qsos, Append);
     }
 
-    private void DistributeTimes()
+    internal DateTime DefaultQsoTimeUtc() => AppendTimeMode ? DateTime.UtcNow : StartUtc;
+
+    internal void NoteLoggedQso(Qso qso)
+    {
+        if (qso.HasExplicitTime)
+        {
+            LastExplicitQsoTimeUtc = qso.TimeUtc;
+        }
+    }
+
+    internal void ResolveTimes(DateTime? endUtcOverride = null)
     {
         if (Qsos.Count == 0)
         {
             return;
         }
-        if (Qsos.Count == 1)
+
+        if (!Qsos.Any(static q => q.HasExplicitTime))
         {
-            Qsos[0].TimeUtc = StartUtc;
+            if (AppendTimeMode)
+            {
+                return;
+            }
+
+            DistributeTimes(StartUtc, EndUtc);
             return;
         }
-        var span = (EndUtc - StartUtc).TotalSeconds;
+
+        var endUtc = endUtcOverride ?? (AppendTimeMode ? DateTime.UtcNow : EndUtc);
+        var previousExplicit = -1;
+        for (var i = 0; i < Qsos.Count; i++)
+        {
+            if (!Qsos[i].HasExplicitTime)
+            {
+                continue;
+            }
+
+            if (previousExplicit < 0)
+            {
+                ResolveLeadingTimes(i);
+            }
+            else
+            {
+                ResolveBetweenExplicitTimes(previousExplicit, i);
+            }
+
+            previousExplicit = i;
+        }
+
+        if (previousExplicit >= 0)
+        {
+            ResolveTrailingTimes(previousExplicit, endUtc);
+        }
+    }
+
+    private void DistributeTimes(DateTime startUtc, DateTime endUtc)
+    {
+        if (Qsos.Count == 1)
+        {
+            Qsos[0].TimeUtc = startUtc;
+            return;
+        }
+        var span = (endUtc - startUtc).TotalSeconds;
         if (span <= 0)
         {
             foreach (var q in Qsos)
             {
-                q.TimeUtc = StartUtc;
+                q.TimeUtc = startUtc;
             }
             return;
         }
         var step = span / (Qsos.Count - 1);
         for (var i = 0; i < Qsos.Count; i++)
         {
-            Qsos[i].TimeUtc = StartUtc.AddSeconds(step * i);
+            Qsos[i].TimeUtc = startUtc.AddSeconds(step * i);
+        }
+    }
+
+    private void ResolveLeadingTimes(int explicitIndex)
+    {
+        if (explicitIndex == 0)
+        {
+            return;
+        }
+
+        var explicitTime = Qsos[explicitIndex].TimeUtc;
+        if (explicitTime > StartUtc)
+        {
+            InterpolateTimes(0, explicitIndex - 1, StartUtc, explicitTime);
+            return;
+        }
+
+        for (var i = explicitIndex - 1; i >= 0; i--)
+        {
+            Qsos[i].TimeUtc = explicitTime.AddMinutes(i - explicitIndex);
+        }
+    }
+
+    private void ResolveBetweenExplicitTimes(int previousExplicit, int nextExplicit)
+    {
+        if (nextExplicit == previousExplicit + 1)
+        {
+            return;
+        }
+
+        var previousTime = Qsos[previousExplicit].TimeUtc;
+        var nextTime = Qsos[nextExplicit].TimeUtc;
+        if (nextTime > previousTime)
+        {
+            InterpolateTimes(previousExplicit + 1, nextExplicit - 1, previousTime, nextTime);
+            return;
+        }
+
+        ExtrapolateForward(previousExplicit + 1, nextExplicit - 1, previousTime);
+    }
+
+    private void ResolveTrailingTimes(int explicitIndex, DateTime endUtc)
+    {
+        if (explicitIndex == Qsos.Count - 1)
+        {
+            return;
+        }
+
+        var explicitTime = Qsos[explicitIndex].TimeUtc;
+        if (endUtc > explicitTime)
+        {
+            InterpolateTimes(explicitIndex + 1, Qsos.Count - 1, explicitTime, endUtc);
+            return;
+        }
+
+        ExtrapolateForward(explicitIndex + 1, Qsos.Count - 1, explicitTime);
+    }
+
+    private void InterpolateTimes(int firstIndex, int lastIndex, DateTime startUtc, DateTime endUtc)
+    {
+        var count = lastIndex - firstIndex + 1;
+        var stepTicks = (endUtc - startUtc).Ticks / (count + 1);
+        for (var i = 0; i < count; i++)
+        {
+            Qsos[firstIndex + i].TimeUtc = startUtc.AddTicks(stepTicks * (i + 1));
+        }
+    }
+
+    private void ExtrapolateForward(int firstIndex, int lastIndex, DateTime startUtc)
+    {
+        for (var i = firstIndex; i <= lastIndex; i++)
+        {
+            Qsos[i].TimeUtc = startUtc.AddMinutes(i - firstIndex + 1);
         }
     }
 }
