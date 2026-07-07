@@ -345,7 +345,22 @@ internal static class Program
 
         if (i < tokens.Length)
         {
-            notes = string.Join(' ', tokens[i..]);
+            var noteTokens = new List<string>();
+            for (; i < tokens.Length; i++)
+            {
+                if (entryTime is null && TryParseQsoEntryTime(tokens[i], session, out parsedTime))
+                {
+                    entryTime = parsedTime;
+                    continue;
+                }
+
+                noteTokens.Add(tokens[i]);
+            }
+
+            if (noteTokens.Count > 0)
+            {
+                notes = string.Join(' ', noteTokens);
+            }
         }
 
         var band = Bands.FromMhz(session.CurrentFreqMhz) ?? "UNKNOWN";
