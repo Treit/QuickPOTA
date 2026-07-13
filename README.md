@@ -5,6 +5,7 @@ CLI tool for quickly generating ADIF files to upload to https://pota.app. Turn a
 ## Highlights
 
 - Interactive wizard that asks only for what it needs: your callsign, the park, the UTC date and start/end times, and the starting frequency and mode.
+- Special-event / club-station mode (`--event`): swap the park for a grid square and a separate station callsign.
 - A single QSO prompt that accepts callsigns, frequency changes, and mode changes on the fly.
 - Automatic CW cut-number translation (`55N` becomes `559`, `TT9` becomes `009`, and so on).
 - Frequency-to-band mapping for every HF, VHF, and UHF amateur band.
@@ -49,13 +50,19 @@ The published binary lives at `bin\Release\net10.0\<rid>\publish\quickpota.exe` 
 
 ## Usage
 
-Start a new activation (interactive wizard):
+Start a new POTA activation (interactive wizard):
 
 ```
 quickpota
 ```
 
-Append QSOs to an existing ADIF file (park, callsign, freq, and mode are read from the last record):
+Start a new special-event / club-station log (asks for grid square and station callsign instead of a park):
+
+```
+quickpota --event
+```
+
+Append QSOs to an existing ADIF file (POTA or event; context is read from the last record):
 
 ```
 quickpota mylog.adi
@@ -158,7 +165,46 @@ Ready. Type 'Q' <enter> to quit and write the ADIF.
 Wrote 2 QSO(s) to US-3166-20260705.adi
 ```
 
-In append mode the tool reuses the park, operator, freq, mode, and last logged time from the last record in the file. Explicit `HH:MM` or `:MM` QSO times work the same way as they do for a new activation; without explicit times, appended QSOs keep their entry-time timestamps.
+In append mode the tool reuses the park (or event) context, callsigns, freq, mode, and last logged time from the last record in the file. Explicit `HH:MM` or `:MM` QSO times work the same way as they do for a new activation; without explicit times, appended QSOs keep their entry-time timestamps.
+
+## Walkthrough: a special event or club-station activation
+
+Use `--event` when you are operating a special-event call, a club station, or any activity that is not a POTA park. Instead of a park reference the wizard asks for the event name, an optional venue, a Maidenhead grid square, and a separate station callsign and operator callsign.
+
+```
+> quickpota --event
+QuickPOTA - new special event log
+
+Event name (e.g. SalmonCon): SalmonCon
+Venue/location (optional, e.g. Valley Camp): Valley Camp
+Grid square (Maidenhead, e.g. CN97dl): CN97dl
+Station callsign (the event call): K7S
+Your operator callsign: AE7XI
+Activation date (UTC, YYYY-MM-DD or today) [today]: 2026-07-12
+Start time (UTC, HHMM): 1600
+End time (UTC, HHMM): 2359
+
+Starting frequency (KHz or MHz): 14060
+  -> 14.060 MHz (20m)
+Starting mode [CW]: CW
+
+Ready. Type 'Q' <enter> to quit and write the ADIF.
+
+--- SALMONCON as K7S @ Valley Camp [CN97dl] | Op AE7XI | 14.060 MHz CW (20m) ---
+[1] > 16:00 K1ABC
+  logged K1ABC 16:00Z 599/599
+[2] > :03 W7XYZ 55N WA
+  logged W7XYZ 16:03Z 599/559 WA
+[3] > 23:58 NF7N
+  logged NF7N 23:58Z 599/599
+[4] > 00:43 KD7ABC
+  logged KD7ABC 00:43Z 599/599
+[5] > Q
+
+Wrote 4 QSO(s) to C:\path\to\K7S-20260712.adi
+```
+
+Each QSO carries `STATION_CALLSIGN=K7S`, `OPERATOR=AE7XI`, `MY_SIG=SALMONCON`, `MY_SIG_INFO=SALMONCON`, `MY_GRIDSQUARE=CN97dl`, and `SIG_INFO=Valley Camp`. Times that go backward past midnight roll the date forward correctly, so 23:58 followed by 00:43 becomes 7/12 23:58Z and 7/13 00:43Z. Append (`quickpota K7S-20260712.adi`) auto-detects the event context from the file and does not prompt again.
 
 ## Cut-number examples
 
