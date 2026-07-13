@@ -8,7 +8,7 @@ internal static class Adif
     private const string ProgramId = "QuickPOTA";
     private const string AdifVer = "3.1.4";
 
-    public static void Write(string path, string myCall, string parkRef, string? parkName, IEnumerable<Qso> qsos, bool append)
+    public static void Write(string path, ActivationContext ctx, IEnumerable<Qso> qsos, bool append)
     {
         var sb = new StringBuilder();
         var writeHeader = !append || !File.Exists(path);
@@ -20,7 +20,7 @@ internal static class Adif
 
         foreach (var q in qsos)
         {
-            sb.Append(Record(q, myCall, parkRef, parkName));
+            sb.Append(Record(q, ctx));
         }
 
         if (append && File.Exists(path))
@@ -45,7 +45,7 @@ internal static class Adif
         return sb.ToString();
     }
 
-    private static string Record(Qso q, string myCall, string parkRef, string? parkName)
+    private static string Record(Qso q, ActivationContext ctx)
     {
         var sb = new StringBuilder();
         sb.Append(Field("CALL", q.Call));
@@ -54,30 +54,41 @@ internal static class Adif
         sb.Append(Field("BAND", q.Band));
         sb.Append(Field("FREQ", q.FreqMhz.ToString("0.000000", CultureInfo.InvariantCulture)));
         sb.Append(Field("MODE", q.Mode));
+
         if (!string.IsNullOrEmpty(q.Submode))
         {
             sb.Append(Field("SUBMODE", q.Submode));
         }
+
         sb.Append(Field("RST_SENT", q.RstSent));
         sb.Append(Field("RST_RCVD", q.RstRcvd));
-        sb.Append(Field("STATION_CALLSIGN", myCall));
-        sb.Append(Field("OPERATOR", myCall));
-        sb.Append(Field("MY_SIG", "POTA"));
-        sb.Append(Field("MY_SIG_INFO", parkRef));
+        sb.Append(Field("STATION_CALLSIGN", ctx.StationCall));
+        sb.Append(Field("OPERATOR", ctx.OperatorCall));
+        sb.Append(Field("MY_SIG", ctx.Sig));
+        sb.Append(Field("MY_SIG_INFO", ctx.SigInfo));
+
+        if (!string.IsNullOrWhiteSpace(ctx.MyGridSquare))
+        {
+            sb.Append(Field("MY_GRIDSQUARE", ctx.MyGridSquare));
+        }
+
         if (!string.IsNullOrWhiteSpace(q.Qth))
         {
             sb.Append(Field("STATE", q.Qth));
             sb.Append(Field("QTH", q.Qth));
         }
+
         if (!string.IsNullOrWhiteSpace(q.Notes))
         {
             sb.Append(Field("COMMENT", q.Notes));
             sb.Append(Field("NOTES", q.Notes));
         }
-        if (!string.IsNullOrWhiteSpace(parkName))
+
+        if (!string.IsNullOrWhiteSpace(ctx.SigInfoDisplay))
         {
-            sb.Append(Field("SIG_INFO", parkName));
+            sb.Append(Field("SIG_INFO", ctx.SigInfoDisplay));
         }
+
         sb.AppendLine("<EOR>");
         return sb.ToString();
     }
@@ -88,21 +99,25 @@ internal static class Adif
         return string.Create(CultureInfo.InvariantCulture, $"<{name}:{bytes}>{value} ");
     }
 
-    public static (string? LastCall, double? FreqMhz, string? Mode, string? Submode, string? ParkRef, string? MyCall, DateTime? LastTime) PeekLast(string path)
+    public static PeekResult PeekLast(string path)
     {
         var bytes = File.ReadAllBytes(path);
         var eohEnd = FindEohEnd(bytes);
         var bodyStart = eohEnd >= 0 ? eohEnd : 0;
 
         var recordRanges = SplitByEor(bytes, bodyStart);
+
         for (var i = recordRanges.Count - 1; i >= 0; i--)
         {
             var (offset, length) = recordRanges[i];
+
             if (length == 0)
             {
                 continue;
             }
+
             var fields = ParseFields(bytes, offset, length);
+
             if (fields.Count == 0)
             {
                 continue;
@@ -112,12 +127,17 @@ internal static class Adif
             fields.TryGetValue("FREQ", out var freq);
             fields.TryGetValue("MODE", out var mode);
             fields.TryGetValue("SUBMODE", out var submode);
-            fields.TryGetValue("MY_SIG_INFO", out var park);
-            fields.TryGetValue("STATION_CALLSIGN", out var mycall);
+            fields.TryGetValue("MY_SIG", out var sig);
+            fields.TryGetValue("MY_SIG_INFO", out var sigInfo);
+            fields.TryGetValue("SIG_INFO", out var sigInfoDisplay);
+            fields.TryGetValue("MY_GRIDSQUARE", out var grid);
+            fields.TryGetValue("STATION_CALLSIGN", out var stationCall);
+            fields.TryGetValue("OPERATOR", out var operatorCall);
             fields.TryGetValue("QSO_DATE", out var date);
             fields.TryGetValue("TIME_ON", out var time);
 
             DateTime? dt = null;
+
             if (date is not null && time is not null &&
                 DateTime.TryParseExact(date + time.PadRight(6, '0')[..6], "yyyyMMddHHmmss",
                     CultureInfo.InvariantCulture,
@@ -126,15 +146,32 @@ internal static class Adif
             {
                 dt = parsed;
             }
+
             double? f = null;
+
             if (freq is not null && double.TryParse(freq, NumberStyles.Float, CultureInfo.InvariantCulture, out var fv))
             {
                 f = fv;
             }
-            return (call, f, mode, submode, park, mycall, dt);
+
+            return new PeekResult(call, f, mode, submode, sig, sigInfo, sigInfoDisplay, grid, stationCall, operatorCall, dt);
         }
-        return (null, null, null, null, null, null, null);
+
+        return new PeekResult(null, null, null, null, null, null, null, null, null, null, null);
     }
+
+    internal sealed record PeekResult(
+        string? LastCall,
+        double? FreqMhz,
+        string? Mode,
+        string? Submode,
+        string? Sig,
+        string? SigInfo,
+        string? SigInfoDisplay,
+        string? MyGridSquare,
+        string? StationCall,
+        string? OperatorCall,
+        DateTime? LastTime);
 
     private static int FindEohEnd(byte[] bytes)
     {

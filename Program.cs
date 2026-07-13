@@ -18,7 +18,21 @@ internal static class Program
                 return 0;
             }
 
-            var existingFile = args.Length > 0 ? args[0] : null;
+            var eventMode = false;
+            string? existingFile = null;
+
+            foreach (var a in args)
+            {
+                if (a is "-e" or "--event")
+                {
+                    eventMode = true;
+                }
+                else if (existingFile is null)
+                {
+                    existingFile = a;
+                }
+            }
+
             if (existingFile is not null && !File.Exists(existingFile))
             {
                 Console.Error.WriteLine($"File not found: {existingFile}");
@@ -28,9 +42,20 @@ internal static class Program
             var parks = new Parks();
             var loadTask = parks.LoadAsync();
 
-            var session = existingFile is not null
-                ? StartAppend(existingFile, parks, loadTask)
-                : await StartNewAsync(parks, loadTask);
+            Session session;
+
+            if (existingFile is not null)
+            {
+                session = StartAppend(existingFile, parks, loadTask);
+            }
+            else if (eventMode)
+            {
+                session = StartNewEvent();
+            }
+            else
+            {
+                session = await StartNewAsync(parks, loadTask);
+            }
 
             RunLoop(session);
             session.Save();
@@ -47,11 +72,12 @@ internal static class Program
 
     private static void PrintHelp()
     {
-        Console.WriteLine("QuickPOTA - quickly convert a paper POTA log to ADIF");
+        Console.WriteLine("QuickPOTA - quickly convert a paper log to ADIF");
         Console.WriteLine();
         Console.WriteLine("Usage:");
-        Console.WriteLine("  quickpota                 Start a new activation and prompt for details.");
-        Console.WriteLine("  quickpota <file.adi>      Append new QSOs to the given ADIF file.");
+        Console.WriteLine("  quickpota                 Start a new POTA activation and prompt for details.");
+        Console.WriteLine("  quickpota --event         Start a new special-event log (grid square, station call).");
+        Console.WriteLine("  quickpota <file.adi>      Append new QSOs to the given ADIF file (POTA or event).");
         Console.WriteLine();
         Console.WriteLine("In the QSO prompt:");
         Console.WriteLine("  [time] <call> [time] [sent/rcvd | rcvd] [time] [qth] [notes]   Log a contact.");
@@ -68,17 +94,47 @@ internal static class Program
     private static Session StartAppend(string path, Parks parks, Task loadTask)
     {
         var peek = Adif.PeekLast(path);
-        if (peek.ParkRef is null || peek.MyCall is null || peek.FreqMhz is null || peek.Mode is null)
+
+        if (peek.SigInfo is null || peek.OperatorCall is null || peek.FreqMhz is null || peek.Mode is null)
         {
-            throw new InvalidOperationException("Existing ADIF does not contain enough context (park, callsign, freq, mode) to append.");
+            throw new InvalidOperationException("Existing ADIF does not contain enough context (activation, callsign, freq, mode) to append.");
         }
 
-        WaitForLoad(loadTask);
-        var parkName = parks.Lookup(peek.ParkRef);
+        var sig = peek.Sig ?? "POTA";
+        var isPota = string.Equals(sig, "POTA", StringComparison.OrdinalIgnoreCase);
+        string? sigInfoDisplay = peek.SigInfoDisplay;
+
+        if (isPota)
+        {
+            WaitForLoad(loadTask);
+            sigInfoDisplay = parks.Lookup(peek.SigInfo) ?? peek.SigInfoDisplay;
+        }
+
+        var ctx = new ActivationContext(
+            OperatorCall: peek.OperatorCall,
+            StationCall: peek.StationCall ?? peek.OperatorCall,
+            Sig: sig,
+            SigInfo: peek.SigInfo,
+            SigInfoDisplay: sigInfoDisplay,
+            MyGridSquare: peek.MyGridSquare);
 
         Console.WriteLine($"Append mode: {path}");
-        Console.WriteLine($"  Operator: {peek.MyCall}");
-        Console.WriteLine($"  Park:     {peek.ParkRef}{(parkName is null ? "" : $" ({parkName})")}");
+        Console.WriteLine($"  Operator: {ctx.OperatorCall}{(ctx.StationCall == ctx.OperatorCall ? "" : $" (station {ctx.StationCall})")}");
+
+        if (isPota)
+        {
+            Console.WriteLine($"  Park:     {ctx.SigInfo}{(sigInfoDisplay is null ? "" : $" ({sigInfoDisplay})")}");
+        }
+        else
+        {
+            Console.WriteLine($"  Event:    {ctx.Sig}{(string.IsNullOrWhiteSpace(sigInfoDisplay) ? "" : $" ({sigInfoDisplay})")}");
+
+            if (!string.IsNullOrWhiteSpace(ctx.MyGridSquare))
+            {
+                Console.WriteLine($"  Grid:     {ctx.MyGridSquare}");
+            }
+        }
+
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  Freq:     {peek.FreqMhz:0.000} MHz"));
         Console.WriteLine($"  Mode:     {peek.Mode}{(peek.Submode is null ? "" : $" ({peek.Submode})")}");
         Console.WriteLine();
@@ -87,9 +143,7 @@ internal static class Program
         {
             OutputPath = path,
             Append = true,
-            MyCall = peek.MyCall,
-            ParkRef = peek.ParkRef,
-            ParkName = parkName,
+            Activation = ctx,
             CurrentFreqMhz = peek.FreqMhz.Value,
             CurrentMode = peek.Mode,
             CurrentSubmode = peek.Submode,
@@ -155,19 +209,78 @@ internal static class Program
         var freq = PromptFrequency("Starting frequency (KHz or MHz)");
         var (mode, submode) = PromptMode("Starting mode");
 
+        var ctx = new ActivationContext(
+            OperatorCall: myCall,
+            StationCall: myCall,
+            Sig: "POTA",
+            SigInfo: parkRef,
+            SigInfoDisplay: parkName,
+            MyGridSquare: null);
+
         return Task.FromResult(new Session
         {
-            OutputPath = DefaultOutputPath(parkRef, date),
+            OutputPath = DefaultPotaOutputPath(parkRef, date),
             Append = false,
-            MyCall = myCall,
-            ParkRef = parkRef,
-            ParkName = parkName,
+            Activation = ctx,
             CurrentFreqMhz = freq,
             CurrentMode = mode,
             CurrentSubmode = submode,
             StartUtc = startUtc,
             EndUtc = endUtc,
         });
+    }
+
+    private static Session StartNewEvent()
+    {
+        Console.WriteLine("QuickPOTA - new special event log");
+        Console.WriteLine();
+
+        var eventName = PromptRequired("Event name (e.g. SalmonCon)", null).ToUpperInvariant();
+        var venue = PromptOptional("Venue/location (optional, e.g. Valley Camp)");
+        var grid = PromptRequired("Grid square (Maidenhead, e.g. CN97dl)",
+            static s => IsValidGrid(s) ? null : "Enter a 4, 6, or 8 character Maidenhead grid.");
+        grid = NormalizeGrid(grid);
+        var stationCall = PromptRequired("Station callsign (the event call)",
+            static s => IsValidCall(s) ? null : "Enter a valid callsign.").ToUpperInvariant();
+        var operatorCall = PromptRequired("Your operator callsign",
+            static s => IsValidCall(s) ? null : "Enter a valid callsign.").ToUpperInvariant();
+
+        var date = PromptDate("Activation date (UTC, YYYY-MM-DD or today)");
+        var startUtc = PromptTime("Start time (UTC, HHMM)", date);
+        var endUtc = PromptTime("End time (UTC, HHMM)", date);
+
+        if (endUtc < startUtc)
+        {
+            endUtc = endUtc.AddDays(1);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Tip: at the QSO prompt you can also enter a frequency (KHz or MHz)");
+        Console.WriteLine("     to switch, e.g. '14030 CW' or '146.520 FM', or just a mode name.");
+        Console.WriteLine();
+
+        var freq = PromptFrequency("Starting frequency (KHz or MHz)");
+        var (mode, submode) = PromptMode("Starting mode");
+
+        var ctx = new ActivationContext(
+            OperatorCall: operatorCall,
+            StationCall: stationCall,
+            Sig: eventName,
+            SigInfo: eventName,
+            SigInfoDisplay: string.IsNullOrWhiteSpace(venue) ? null : venue,
+            MyGridSquare: grid);
+
+        return new Session
+        {
+            OutputPath = DefaultEventOutputPath(stationCall, date),
+            Append = false,
+            Activation = ctx,
+            CurrentFreqMhz = freq,
+            CurrentMode = mode,
+            CurrentSubmode = submode,
+            StartUtc = startUtc,
+            EndUtc = endUtc,
+        };
     }
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background download failure is expected offline; embedded fallback covers it.")]
@@ -182,9 +295,15 @@ internal static class Program
         }
     }
 
-    private static string DefaultOutputPath(string parkRef, DateTime date)
+    private static string DefaultPotaOutputPath(string parkRef, DateTime date)
     {
         var name = string.Create(CultureInfo.InvariantCulture, $"{parkRef}-{date:yyyyMMdd}.adi");
+        return Path.Combine(Environment.CurrentDirectory, name);
+    }
+
+    private static string DefaultEventOutputPath(string stationCall, DateTime date)
+    {
+        var name = string.Create(CultureInfo.InvariantCulture, $"{stationCall}-{date:yyyyMMdd}.adi");
         return Path.Combine(Environment.CurrentDirectory, name);
     }
 
@@ -591,8 +710,10 @@ internal static class Program
         {
             return false;
         }
+
         var hasDigit = false;
         var hasLetter = false;
+
         foreach (var c in s)
         {
             if (char.IsDigit(c))
@@ -608,7 +729,58 @@ internal static class Program
                 return false;
             }
         }
+
         return hasDigit && hasLetter;
+    }
+
+    private static bool IsValidGrid(string s)
+    {
+        if (s.Length is not (4 or 6 or 8))
+        {
+            return false;
+        }
+
+        for (var k = 0; k < s.Length; k++)
+        {
+            var c = s[k];
+            var pair = k / 2;
+            var ok = pair switch
+            {
+                0 => c is >= 'A' and <= 'R' or >= 'a' and <= 'r',
+                1 => char.IsDigit(c),
+                2 => c is >= 'A' and <= 'X' or >= 'a' and <= 'x',
+                3 => char.IsDigit(c),
+                _ => false,
+            };
+
+            if (!ok)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string NormalizeGrid(string s)
+    {
+        var chars = s.ToCharArray();
+
+        for (var k = 0; k < chars.Length; k++)
+        {
+            var pair = k / 2;
+
+            if (pair == 0 || pair == 1)
+            {
+                chars[k] = char.ToUpperInvariant(chars[k]);
+            }
+            else if (pair == 2)
+            {
+                chars[k] = char.ToLowerInvariant(chars[k]);
+            }
+        }
+
+        return new string(chars);
     }
 
     private static string PromptRequired(string label, Func<string, string?>? validator)
@@ -617,27 +789,40 @@ internal static class Program
         {
             Console.Write($"{label}: ");
             var line = Console.ReadLine();
+
             if (line is null)
             {
                 throw new IOException("Input stream closed.");
             }
+
             var t = line.Trim();
+
             if (t.Length == 0)
             {
                 Console.WriteLine("  ! Required.");
                 continue;
             }
+
             if (validator is not null)
             {
                 var err = validator(t);
+
                 if (err is not null)
                 {
                     Console.WriteLine($"  ! {err}");
                     continue;
                 }
             }
+
             return t;
         }
+    }
+
+    private static string PromptOptional(string label)
+    {
+        Console.Write($"{label}: ");
+        var line = Console.ReadLine();
+        return line is null ? "" : line.Trim();
     }
 
     private static DateTime PromptDate(string label)
@@ -739,7 +924,21 @@ internal static class Program
 
     private static void PrintStatus(Session s)
     {
-        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"--- {s.ParkRef}{(s.ParkName is null ? "" : $" ({s.ParkName})")} | Op {s.MyCall} | {s.CurrentFreqMhz:0.000} MHz {s.CurrentMode}{(s.CurrentSubmode is null ? "" : $" ({s.CurrentSubmode})")} ({Bands.FromMhz(s.CurrentFreqMhz) ?? "?"}) ---"));
+        var ctx = s.Activation;
+        string headline;
+
+        if (ctx.IsPota)
+        {
+            headline = string.Create(CultureInfo.InvariantCulture, $"{ctx.SigInfo}{(ctx.SigInfoDisplay is null ? "" : $" ({ctx.SigInfoDisplay})")} | Op {ctx.OperatorCall} | {s.CurrentFreqMhz:0.000} MHz {s.CurrentMode}{(s.CurrentSubmode is null ? "" : $" ({s.CurrentSubmode})")} ({Bands.FromMhz(s.CurrentFreqMhz) ?? "?"})");
+        }
+        else
+        {
+            var venue = string.IsNullOrWhiteSpace(ctx.SigInfoDisplay) ? "" : $" @ {ctx.SigInfoDisplay}";
+            var grid = string.IsNullOrWhiteSpace(ctx.MyGridSquare) ? "" : $" [{ctx.MyGridSquare}]";
+            headline = string.Create(CultureInfo.InvariantCulture, $"{ctx.Sig} as {ctx.StationCall}{venue}{grid} | Op {ctx.OperatorCall} | {s.CurrentFreqMhz:0.000} MHz {s.CurrentMode}{(s.CurrentSubmode is null ? "" : $" ({s.CurrentSubmode})")} ({Bands.FromMhz(s.CurrentFreqMhz) ?? "?"})");
+        }
+
+        Console.WriteLine($"--- {headline} ---");
     }
 }
 
@@ -747,9 +946,7 @@ internal sealed class Session
 {
     public required string OutputPath { get; set; }
     public required bool Append { get; init; }
-    public required string MyCall { get; init; }
-    public required string ParkRef { get; init; }
-    public string? ParkName { get; init; }
+    public required ActivationContext Activation { get; init; }
     public required double CurrentFreqMhz { get; set; }
     public required string CurrentMode { get; set; }
     public string? CurrentSubmode { get; set; }
@@ -762,7 +959,7 @@ internal sealed class Session
     public void Save()
     {
         ResolveTimes();
-        Adif.Write(OutputPath, MyCall, ParkRef, ParkName, Qsos, Append);
+        Adif.Write(OutputPath, Activation, Qsos, Append);
     }
 
     internal DateTime DefaultQsoTimeUtc() => AppendTimeMode ? DateTime.UtcNow : StartUtc;
