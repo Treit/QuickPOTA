@@ -762,7 +762,7 @@ internal sealed class Session
     public void Save()
     {
         ResolveTimes();
-        Adif.Write(OutputPath, MyCall, ParkRef, ParkName, Qsos, Append);
+        Adif.Write(OutputPath, MyCall, ParkRef, Qsos, Append);
     }
 
     internal DateTime DefaultQsoTimeUtc() => AppendTimeMode ? DateTime.UtcNow : StartUtc;

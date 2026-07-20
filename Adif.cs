@@ -8,7 +8,7 @@ internal static class Adif
     private const string ProgramId = "QuickPOTA";
     private const string AdifVer = "3.1.4";
 
-    public static void Write(string path, string myCall, string parkRef, string? parkName, IEnumerable<Qso> qsos, bool append)
+    public static void Write(string path, string myCall, string parkRef, IEnumerable<Qso> qsos, bool append)
     {
         var sb = new StringBuilder();
         var writeHeader = !append || !File.Exists(path);
@@ -20,7 +20,7 @@ internal static class Adif
 
         foreach (var q in qsos)
         {
-            sb.Append(Record(q, myCall, parkRef, parkName));
+            sb.Append(Record(q, myCall, parkRef));
         }
 
         if (append && File.Exists(path))
@@ -45,7 +45,7 @@ internal static class Adif
         return sb.ToString();
     }
 
-    private static string Record(Qso q, string myCall, string parkRef, string? parkName)
+    private static string Record(Qso q, string myCall, string parkRef)
     {
         var sb = new StringBuilder();
         sb.Append(Field("CALL", q.Call));
@@ -54,30 +54,30 @@ internal static class Adif
         sb.Append(Field("BAND", q.Band));
         sb.Append(Field("FREQ", q.FreqMhz.ToString("0.000000", CultureInfo.InvariantCulture)));
         sb.Append(Field("MODE", q.Mode));
+
         if (!string.IsNullOrEmpty(q.Submode))
         {
             sb.Append(Field("SUBMODE", q.Submode));
         }
+
         sb.Append(Field("RST_SENT", q.RstSent));
         sb.Append(Field("RST_RCVD", q.RstRcvd));
         sb.Append(Field("STATION_CALLSIGN", myCall));
         sb.Append(Field("OPERATOR", myCall));
-        sb.Append(Field("MY_SIG", "POTA"));
-        sb.Append(Field("MY_SIG_INFO", parkRef));
+        sb.Append(Field("MY_POTA_REF", parkRef));
+
         if (!string.IsNullOrWhiteSpace(q.Qth))
         {
             sb.Append(Field("STATE", q.Qth));
             sb.Append(Field("QTH", q.Qth));
         }
+
         if (!string.IsNullOrWhiteSpace(q.Notes))
         {
             sb.Append(Field("COMMENT", q.Notes));
             sb.Append(Field("NOTES", q.Notes));
         }
-        if (!string.IsNullOrWhiteSpace(parkName))
-        {
-            sb.Append(Field("SIG_INFO", parkName));
-        }
+
         sb.AppendLine("<EOR>");
         return sb.ToString();
     }
@@ -112,7 +112,12 @@ internal static class Adif
             fields.TryGetValue("FREQ", out var freq);
             fields.TryGetValue("MODE", out var mode);
             fields.TryGetValue("SUBMODE", out var submode);
-            fields.TryGetValue("MY_SIG_INFO", out var park);
+            fields.TryGetValue("MY_POTA_REF", out var park);
+            if (park is null && fields.TryGetValue("MY_SIG_INFO", out var legacyPark))
+            {
+                park = legacyPark;
+            }
+
             fields.TryGetValue("STATION_CALLSIGN", out var mycall);
             fields.TryGetValue("QSO_DATE", out var date);
             fields.TryGetValue("TIME_ON", out var time);
@@ -126,13 +131,17 @@ internal static class Adif
             {
                 dt = parsed;
             }
+
             double? f = null;
+
             if (freq is not null && double.TryParse(freq, NumberStyles.Float, CultureInfo.InvariantCulture, out var fv))
             {
                 f = fv;
             }
+
             return (call, f, mode, submode, park, mycall, dt);
         }
+
         return (null, null, null, null, null, null, null);
     }
 
